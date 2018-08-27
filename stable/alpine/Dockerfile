@@ -1,8 +1,14 @@
 FROM alpine:3.7
 
-LABEL maintainer="NGINX Docker Maintainers <docker-maint@nginx.com>"
+LABEL maintainer="guo-ang <guoang.cn@gmail.com>"
 
-ENV NGINX_VERSION 1.14.0
+ARG NEW_SERVER_NAME=httpserver
+ENV NGINX_VERSION=1.14.0 \
+        # add 3rd party modules env \
+        NGX_DEVEL_KIT_VERSION=0.3.0 \
+        LUA_NGINX_MODULE_VERSION=0.10.13 \
+        LUAJIT_LIB=/usr/lib \
+        LUAJIT_INC=/usr/include/luajit-2.1
 
 RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
 	&& CONFIG="\
@@ -49,6 +55,9 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
 		--with-compat \
 		--with-file-aio \
 		--with-http_v2_module \
+		--add-module=../ngx_http_substitutions_filter_module-0.6.4 \
+		--add-module=../ngx_devel_kit-$NGX_DEVEL_KIT_VERSION \
+		--add-module=../lua-nginx-module-$LUA_NGINX_MODULE_VERSION \
 	" \
 	&& addgroup -S nginx \
 	&& adduser -D -S -h /var/cache/nginx -s /sbin/nologin -G nginx nginx \
@@ -65,8 +74,14 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
 		libxslt-dev \
 		gd-dev \
 		geoip-dev \
+		# install lua
+		luajit-dev && apk add --no-cache luajit \
 	&& curl -fSL https://nginx.org/download/nginx-$NGINX_VERSION.tar.gz -o nginx.tar.gz \
 	&& curl -fSL https://nginx.org/download/nginx-$NGINX_VERSION.tar.gz.asc  -o nginx.tar.gz.asc \
+	# download 3rd party modules
+	&& curl -fSL --ssl-no-revoke https://github.com/yaoweibin/ngx_http_substitutions_filter_module/archive/v0.6.4.tar.gz -o ngx_http_substitutions_filter_module.tgz \
+	&& curl -fSL --ssl-no-revoke https://github.com/simpl/ngx_devel_kit/archive/v$NGX_DEVEL_KIT_VERSION.tar.gz -o ndk.tar.gz \
+	&& curl -fSL --ssl-no-revoke https://github.com/openresty/lua-nginx-module/archive/v$LUA_NGINX_MODULE_VERSION.tar.gz -o lua.tar.gz \
 	&& export GNUPGHOME="$(mktemp -d)" \
 	&& found=''; \
 	for server in \
@@ -84,7 +99,18 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
 	&& mkdir -p /usr/src \
 	&& tar -zxC /usr/src -f nginx.tar.gz \
 	&& rm nginx.tar.gz \
+	# tar 3rd party modules
+	&& tar -zxC /usr/src -f ngx_http_substitutions_filter_module.tgz \
+	&& rm ngx_http_substitutions_filter_module.tgz \
+	&& tar -zxC /usr/src -f ndk.tar.gz \
+	&& rm ndk.tar.gz \
+	&& tar -zxC /usr/src -f lua.tar.gz \
+	&& rm lua.tar.gz \
 	&& cd /usr/src/nginx-$NGINX_VERSION \
+	# update nginx to new server name
+	&& sed -i "s/\"nginx\/\" NGINX_VERSION/\"$NEW_SERVER_NAME\"/g" src/core/nginx.h \
+	&& sed -i "s/\"Server: nginx\"/\"Server: $NEW_SERVER_NAME\"/g" src/http/ngx_http_header_filter_module.c \
+	&& sed -i "s/<center>nginx<\/center>/<center>$NEW_SERVER_NAME<\/center>/g" src/http/ngx_http_special_response.c \
 	&& ./configure $CONFIG --with-debug \
 	&& make -j$(getconf _NPROCESSORS_ONLN) \
 	&& mv objs/nginx objs/nginx-debug \
@@ -109,6 +135,10 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
 	&& strip /usr/sbin/nginx* \
 	&& strip /usr/lib/nginx/modules/*.so \
 	&& rm -rf /usr/src/nginx-$NGINX_VERSION \
+	# remove 3rd party modules
+	&& rm -rf /usr/src/ngx_http_substitutions_filter_module-0.6.4 \
+	&& rm -rf /usr/src/ngx_devel_kit-${NGX_DEVEL_KIT_VERSION} \
+	&& rm -rf /usr/src/lua-nginx-module-${LUA_NGINX_MODULE_VERSION} \
 	\
 	# Bring in gettext so we can get `envsubst`, then throw
 	# the rest away. To do this, we need to install `gettext`
@@ -136,10 +166,11 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
 	&& ln -sf /dev/stdout /var/log/nginx/access.log \
 	&& ln -sf /dev/stderr /var/log/nginx/error.log
 
-COPY nginx.conf /etc/nginx/nginx.conf
-COPY nginx.vh.default.conf /etc/nginx/conf.d/default.conf
+#COPY nginx.conf /etc/nginx/nginx.conf
+#COPY nginx.vh.default.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
+EXPOSE 443
 
 STOPSIGNAL SIGTERM
 
